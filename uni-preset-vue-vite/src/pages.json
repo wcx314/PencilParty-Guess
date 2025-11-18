@@ -20,6 +20,13 @@
 				"navigationBarTitleText": "个人资料",
 				"navigationStyle": "custom"
 			}
+		},
+		{
+			"path": "pages/settings/settings",
+			"style": {
+				"navigationBarTitleText": "设置",
+				"navigationStyle": "custom"
+			}
 		}
 	],
 	"globalStyle": {

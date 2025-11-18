@@ -221,9 +221,8 @@ export default {
     
     // 显示设置
     showSettings() {
-      uni.showToast({
-        title: '设置页面开发中',
-        icon: 'none'
+      uni.navigateTo({
+        url: '/pages/settings/settings'
       })
     },
     
