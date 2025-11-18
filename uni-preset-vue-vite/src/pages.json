@@ -13,6 +13,13 @@
 				"navigationBarTitleText": "游戏大厅",
 				"navigationStyle": "custom"
 			}
+		},
+		{
+			"path": "pages/profile/profile",
+			"style": {
+				"navigationBarTitleText": "个人资料",
+				"navigationStyle": "custom"
+			}
 		}
 	],
 	"globalStyle": {

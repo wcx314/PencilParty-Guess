@@ -214,9 +214,8 @@ export default {
     
     // 显示个人资料
     showProfile() {
-      uni.showToast({
-        title: '个人资料页面开发中',
-        icon: 'none'
+      uni.navigateTo({
+        url: '/pages/profile/profile'
       })
     },
     
