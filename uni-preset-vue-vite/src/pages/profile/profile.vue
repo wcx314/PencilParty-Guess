@@ -237,6 +237,11 @@
 </template>
 
 <script>
+import authService from '@/services/authService'
+import gameService from '@/services/gameService'
+import { showToast, showLoading, hideLoading, showModal } from '@/utils/platform'
+import { setItem, getItem } from '@/utils/storage'
+
 export default {
   data() {
     return {
@@ -299,7 +304,12 @@ export default {
   },
   
   onLoad() {
-    this.loadProfileData()
+    this.initProfile()
+  },
+  
+  onShow() {
+    // 页面显示时刷新用户数据
+    this.refreshProfileData()
   },
   
   methods: {
@@ -355,11 +365,77 @@ export default {
       return { icon: '❓', name: '未知', dateRange: '' }
     },
     
-    // 加载个人资料数据
-    loadProfileData() {
-      const savedProfile = uni.getStorageSync('userProfile')
+    // 初始化个人资料
+    async initProfile() {
+      try {
+        showLoading('加载资料...')
+        
+        // 获取当前用户信息
+        const result = await authService.getCurrentUser()
+        
+        if (result.success) {
+          const user = result.user
+          
+          // 填充表单数据
+          this.profileForm = {
+            avatar: user.avatar || '',
+            nickname: user.nickname || '',
+            gender: user.gender || 'secret',
+            birthday: user.birthday || '',
+            signature: user.signature || '',
+            favoriteGames: user.preferences?.favoriteGames || [],
+            skillLevel: user.preferences?.skill_level || 'beginner',
+            privacy: user.preferences?.privacy || 'public'
+          }
+        } else {
+          // 降级到本地存储
+          this.loadLocalProfile()
+        }
+        
+      } catch (error) {
+        console.error('初始化个人资料失败:', error)
+        this.loadLocalProfile()
+      } finally {
+        hideLoading()
+      }
+    },
+
+    // 刷新个人资料数据
+    async refreshProfileData() {
+      try {
+        const result = await authService.refreshUserInfo()
+        if (result.success) {
+          const user = result.user
+          
+          // 更新表单数据（不覆盖用户修改）
+          if (!this.profileForm.avatar) this.profileForm.avatar = user.avatar || ''
+          if (!this.profileForm.nickname) this.profileForm.nickname = user.nickname || ''
+          if (!this.profileForm.gender) this.profileForm.gender = user.gender || 'secret'
+          if (!this.profileForm.birthday) this.profileForm.birthday = user.birthday || ''
+          if (!this.profileForm.signature) this.profileForm.signature = user.signature || ''
+          if (this.profileForm.favoriteGames.length === 0) {
+            this.profileForm.favoriteGames = user.preferences?.favoriteGames || []
+          }
+          if (!this.profileForm.skillLevel) this.profileForm.skillLevel = user.preferences?.skill_level || 'beginner'
+          if (!this.profileForm.privacy) this.profileForm.privacy = user.preferences?.privacy || 'public'
+        }
+      } catch (error) {
+        console.error('刷新个人资料失败:', error)
+      }
+    },
+
+    // 加载本地个人资料
+    loadLocalProfile() {
+      const savedProfile = getItem('userProfile')
       if (savedProfile) {
         this.profileForm = { ...this.profileForm, ...savedProfile }
+      }
+      
+      // 同时加载用户信息
+      const userInfo = getItem('userInfo')
+      if (userInfo) {
+        this.profileForm.avatar = userInfo.avatar || this.profileForm.avatar
+        this.profileForm.nickname = userInfo.nickname || this.profileForm.nickname
       }
     },
     
@@ -426,43 +502,141 @@ export default {
     // 保存个人资料
     async saveProfile() {
       if (!this.canSave) {
-        uni.showToast({
-          title: '请完善基本信息',
-          icon: 'none'
-        })
+        showToast('请完善基本信息')
         return
       }
       
-      uni.showLoading({
-        title: '保存中...'
-      })
+      showLoading('保存中...')
       
       try {
-        // 模拟保存请求
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        // 准备保存数据
+        const profileData = {
+          nickname: this.profileForm.nickname,
+          avatar: this.profileForm.avatar,
+          gender: this.profileForm.gender,
+          birthday: this.profileForm.birthday,
+          signature: this.profileForm.signature,
+          preferences: {
+            favorite_games: this.profileForm.favoriteGames,
+            skill_level: this.profileForm.skillLevel,
+            privacy: this.profileForm.privacy,
+            notification_enabled: true,
+            sound_enabled: true,
+            vibration_enabled: true
+          }
+        }
         
-        // 保存到本地存储
-        uni.setStorageSync('userProfile', this.profileForm)
+        // 调用API保存
+        const result = await authService.updateProfile(profileData)
         
-        uni.hideLoading()
-        uni.showToast({
-          title: '保存成功',
-          icon: 'success'
-        })
-        
-        // 返回上一页
-        setTimeout(() => {
-          uni.navigateBack()
-        }, 1500)
+        if (result.success) {
+          // 保存到本地存储作为备份
+          setItem('userProfile', this.profileForm)
+          
+          hideLoading()
+          showToast('保存成功', 'success')
+          
+          // 返回上一页
+          setTimeout(() => {
+            uni.navigateBack()
+          }, 1500)
+        } else {
+          hideLoading()
+          showToast(result.message || '保存失败，请重试')
+        }
         
       } catch (error) {
-        uni.hideLoading()
-        uni.showToast({
-          title: '保存失败，请重试',
-          icon: 'none'
-        })
+        hideLoading()
+        console.error('保存个人资料失败:', error)
+        
+        // 网络错误时询问是否保存到本地
+        const saveLocal = await showModal(
+          '网络错误',
+          '无法连接到服务器，是否保存到本地？',
+          true
+        )
+        
+        if (saveLocal) {
+          setItem('userProfile', this.profileForm)
+          showToast('已保存到本地', 'success')
+        }
       }
-    }
+    },
+
+    // 获取游戏统计信息
+    async getGameStats() {
+      try {
+        const result = await gameService.getUserGameStats()
+        if (result.success) {
+          return result.gameStats || []
+        }
+      } catch (error) {
+        console.error('获取游戏统计失败:', error)
+      }
+      return []
+    },
+
+    // 格式化游戏统计显示
+    formatGameStats(stats) {
+      const totalGames = stats.reduce((sum, stat) => sum + stat.total_games, 0)
+      const totalWins = stats.reduce((sum, stat) => sum + stat.wins, 0)
+      const totalScore = stats.reduce((sum, stat) => sum + stat.best_score, 0)
+      
+      return {
+        totalGames,
+        totalWins,
+        totalScore,
+        winRate: totalGames > 0 ? ((totalWins / totalGames) * 100).toFixed(1) : 0
+      }
+    },
+
+    // 获取技能等级显示名称
+    getSkillLevelName(level) {
+      return gameService.getSkillLevelName(level)
+    },
+
+    // 获取星座详细信息
+    getConstellationDetails(month, day) {
+      const constellations = [
+        { name: '水瓶座', icon: '♒', dateRange: '1.20-2.18', desc: '独立创新' },
+        { name: '双鱼座', icon: '♓', dateRange: '2.19-3.20', desc: '浪漫敏感' },
+        { name: '白羊座', icon: '♈', dateRange: '3.21-4.19', desc: '热情冲动' },
+        { name: '金牛座', icon: '♉', dateRange: '4.20-5.20', desc: '踏实稳重' },
+        { name: '双子座', icon: '♊', dateRange: '5.21-6.21', desc: '聪明善变' },
+        { name: '巨蟹座', icon: '♋', dateRange: '6.22-7.22', desc: '温柔体贴' },
+        { name: '狮子座', icon: '♌', dateRange: '7.23-8.22', desc: '自信阳光' },
+        { name: '处女座', icon: '♍', dateRange: '8.23-9.22', desc: '完美主义' },
+        { name: '天秤座', icon: '♎', dateRange: '9.23-10.23', desc: '优雅和谐' },
+        { name: '天蝎座', icon: '♏', dateRange: '10.24-11.22', desc: '神秘深邃' },
+        { name: '射手座', icon: '♐', dateRange: '11.23-12.21', desc: '自由乐观' },
+        { name: '摩羯座', icon: '♑', dateRange: '12.22-1.19', desc: '踏实进取' }
+      ]
+      
+      for (let constellation of constellations) {
+        if (constellation.startMonth === constellation.endMonth) {
+          if (month === constellation.startMonth &&
+              day >= constellation.startDay &&
+              day <= constellation.endDay) {
+            return constellation
+          }
+        } else if (constellation.startMonth < constellation.endMonth) {
+          if ((month === constellation.startMonth && day >= constellation.startDay) ||
+              (month === constellation.endMonth && day <= constellation.endDay) ||
+              (month > constellation.startMonth && month < constellation.endMonth)) {
+            return constellation
+          }
+        } else {
+          // 跨年的情况（摩羯座）
+          if ((month === constellation.startMonth && day >= constellation.startDay) ||
+              (month === constellation.endMonth && day <= constellation.endDay) ||
+              month > constellation.startMonth || month < constellation.endMonth) {
+            return constellation
+          }
+        }
+      }
+      
+      return { name: '未知', icon: '❓', dateRange: '', desc: '' }
+    },
   }
 }
 </script>

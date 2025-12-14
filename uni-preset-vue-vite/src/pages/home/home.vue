@@ -156,6 +156,10 @@
 </template>
 
 <script>
+import authService from '@/services/authService'
+import gameService from '@/services/gameService'
+import { showToast, showLoading, hideLoading } from '@/utils/platform'
+
 export default {
   data() {
     return {
@@ -163,43 +167,151 @@ export default {
         username: '玩家昵称',
         level: 1,
         avatar: '/static/logo.png'
-      }
+      },
+      gameTypes: [],
+      popularGames: [],
+      isLoading: false
     }
   },
   
   onLoad() {
-    // 获取用户信息
-    this.loadUserInfo()
+    // 初始化用户信息和游戏数据
+    this.initPage()
+  },
+  
+  onShow() {
+    // 页面显示时刷新用户信息
+    this.refreshUserInfo()
   },
   
   methods: {
+    // 初始化页面
+    async initPage() {
+      try {
+        showLoading('加载中...')
+        
+        // 并行加载用户信息和游戏数据
+        await Promise.all([
+          this.loadUserInfo(),
+          this.loadGameTypes(),
+          this.loadPopularGames()
+        ])
+        
+      } catch (error) {
+        console.error('页面初始化失败:', error)
+        showToast('页面加载失败，请重试')
+      } finally {
+        hideLoading()
+      }
+    },
+
     // 加载用户信息
-    loadUserInfo() {
-      // 这里可以从本地存储或后端获取用户信息
-      const userInfo = uni.getStorageSync('userInfo')
-      if (userInfo) {
-        this.userInfo = { ...this.userInfo, ...userInfo }
+    async loadUserInfo() {
+      try {
+        const result = await authService.getCurrentUser()
+        
+        if (result.success) {
+          this.userInfo = {
+            username: result.user.nickname,
+            level: result.user.level,
+            avatar: result.user.avatar,
+            experience: result.user.experience,
+            coins: result.user.coins
+          }
+        } else {
+          // 降级到本地存储
+          const localInfo = uni.getStorageSync('userInfo')
+          if (localInfo) {
+            this.userInfo = { ...this.userInfo, ...localInfo }
+          }
+        }
+      } catch (error) {
+        console.error('获取用户信息失败:', error)
+        // 降级到本地存储
+        const localInfo = uni.getStorageSync('userInfo')
+        if (localInfo) {
+          this.userInfo = { ...this.userInfo, ...localInfo }
+        }
+      }
+    },
+
+    // 刷新用户信息
+    async refreshUserInfo() {
+      try {
+        const result = await authService.refreshUserInfo()
+        if (result.success) {
+          this.userInfo = {
+            username: result.user.nickname,
+            level: result.user.level,
+            avatar: result.user.avatar,
+            experience: result.user.experience,
+            coins: result.user.coins
+          }
+        }
+      } catch (error) {
+        console.error('刷新用户信息失败:', error)
+      }
+    },
+
+    // 加载游戏类型
+    async loadGameTypes() {
+      try {
+        const result = await gameService.getGameTypes()
+        if (result.success) {
+          this.gameTypes = result.gameTypes
+        }
+      } catch (error) {
+        console.error('获取游戏类型失败:', error)
+      }
+    },
+
+    // 加载热门游戏
+    async loadPopularGames() {
+      try {
+        const result = await gameService.getPopularGames(8)
+        if (result.success) {
+          this.popularGames = result.popularGames
+        }
+      } catch (error) {
+        console.error('获取热门游戏失败:', error)
       }
     },
     
     // 进入游戏
-    enterGame(gameType) {
-      uni.showLoading({
-        title: '正在进入游戏...'
-      })
-      
-      setTimeout(() => {
-        uni.hideLoading()
-        uni.showToast({
-          title: `${this.getGameName(gameType)}游戏开发中`,
-          icon: 'none'
-        })
+    async enterGame(gameType) {
+      try {
+        // 检查用户登录状态
+        if (!authService.isLoggedIn()) {
+          showToast('请先登录')
+          // 跳转到登录页面
+          uni.navigateTo({
+            url: '/pages/login/login'
+          })
+          return
+        }
+
+        showLoading(`正在进入${this.getGameName(gameType)}...`)
         
-        // 这里可以跳转到具体的游戏页面
-        // uni.navigateTo({
-        //   url: `/pages/games/${gameType}/${gameType}`
-        // })
-      }, 1000)
+        // 开始游戏记录
+        const startResult = await gameService.startGame(gameType)
+        
+        if (startResult.success) {
+          hideLoading()
+          
+          // 跳转到游戏页面，传递游戏ID
+          uni.navigateTo({
+            url: `/pages/games/${gameType}/${gameType}?gameId=${startResult.gameId}`
+          })
+        } else {
+          hideLoading()
+          showToast(startResult.message || '进入游戏失败')
+        }
+        
+      } catch (error) {
+        hideLoading()
+        console.error('进入游戏失败:', error)
+        showToast('进入游戏失败，请重试')
+      }
     },
     
     // 获取游戏名称
@@ -227,27 +339,96 @@ export default {
     },
     
     // 显示排行榜
-    showRanking() {
-      uni.showToast({
-        title: '排行榜页面开发中',
-        icon: 'none'
-      })
+    async showRanking() {
+      try {
+        showLoading('加载排行榜...')
+        
+        const result = await gameService.getLeaderboard(null, 'alltime', 50)
+        
+        if (result.success) {
+          hideLoading()
+          
+          // 跳转到排行榜页面
+          uni.navigateTo({
+            url: '/pages/ranking/ranking',
+            success: () => {
+              // 通过事件传递数据
+              uni.$emit('leaderboard-data', {
+                leaderboard: result.leaderboard,
+                userRank: result.userRank
+              })
+            }
+          })
+        } else {
+          hideLoading()
+          showToast(result.message || '获取排行榜失败')
+        }
+        
+      } catch (error) {
+        hideLoading()
+        console.error('获取排行榜失败:', error)
+        showToast('获取排行榜失败，请重试')
+      }
     },
     
     // 显示好友
     showFriends() {
-      uni.showToast({
-        title: '好友页面开发中',
-        icon: 'none'
+      if (!authService.isLoggedIn()) {
+        showToast('请先登录')
+        return
+      }
+      
+      uni.navigateTo({
+        url: '/pages/friends/friends'
       })
     },
     
     // 显示商店
     showShop() {
-      uni.showToast({
-        title: '商店页面开发中',
-        icon: 'none'
+      if (!authService.isLoggedIn()) {
+        showToast('请先登录')
+        return
+      }
+      
+      uni.navigateTo({
+        url: '/pages/shop/shop'
       })
+    },
+
+    // 获取游戏图标（使用gameService的方法）
+    getGameIcon(gameType) {
+      return gameService.getGameIcon(gameType)
+    },
+
+    // 获取游戏名称（使用gameService的方法）
+    getGameName(gameType) {
+      return gameService.getGameName(gameType)
+    },
+
+    // 格式化等级显示
+    formatLevel(level) {
+      return `Lv.${level}`
+    },
+
+    // 格式化经验值显示
+    formatExperience(experience) {
+      const levelProgress = gameService.calculateLevelProgress(experience)
+      return {
+        level: levelProgress.level,
+        progress: levelProgress.progress,
+        currentExp: levelProgress.currentLevelExp,
+        nextExp: levelProgress.nextLevelExp
+      }
+    },
+
+    // 格式化金币显示
+    formatCoins(coins) {
+      if (coins >= 10000) {
+        return `${(coins / 10000).toFixed(1)}w`
+      } else if (coins >= 1000) {
+        return `${(coins / 1000).toFixed(1)}k`
+      }
+      return coins.toString()
     }
   }
 }
